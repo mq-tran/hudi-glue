@@ -1,0 +1,198 @@
+Description:  This template deploys various components to test S3 Datalake and Redshift Data warehouse Hudi and Glue
+
+Parameters:
+
+  RawS3Bucket:
+    Type: String
+    Description: S3 Bucket.
+    Default: mqtran
+  
+  CuratedS3Bucket:
+    Type: String
+    Description: S3 Bucket.
+    Default: mqtran
+
+  DependentJarsAndTempS3Bucket:
+    Type: String
+    Description: S3 Bucket.
+    Default: mqtran
+
+  GlueJobDPUs:
+    Type: Number
+    Description: The number of DPUs that will be assigned to the 2 Glue jobs.
+    Default: 2.0
+
+Resources:
+
+  ExecuteGlueHudiJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LakeHouseExecuteGlueHudiJobRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Path: /
+      Tags:
+        -
+          Key: Project
+          Value: BPHudiPOC
+        -
+          Key: Owner
+          Value: Minh
+
+  ReqdForGlueHudiJobToExecute:
+    Type: AWS::IAM::ManagedPolicy
+    DependsOn: ExecuteGlueHudiJobRole
+    Properties:
+      ManagedPolicyName: LakeHouseReqdForGlueHudiJobToExecute
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - glue:Batch*
+              - glue:Update*
+              - glue:Create*
+              - glue:Delete*
+              - glue:Get*
+              - glue:Reset*
+              - glue:Untag*
+              - glue:Tag*
+            Resource: '*'
+          -
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:AssociateKmsKey
+            Resource: arn:aws:logs:*:*:/aws-glue/*
+          -
+            Effect: Allow
+            Action:
+              - ec2:DescribeVpcEndpoints
+              - ec2:DescribeRouteTables
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcAttribute
+              - ec2:CreateTags
+              - ec2:DeleteTags
+              - ec2:CreateNetworkInterface
+              - ec2:DeleteNetworkInterface
+            Resource: '*'
+          -
+            Effect: Allow
+            Action:
+              - redshift-data:ExecuteStatement
+              - redshift:GetClusterCredentials
+              - iam:GetRole
+            Resource: '*'
+          -
+            Effect: Allow
+            Action:
+              - s3:GetBucketLocation
+              - s3:ListBucket
+              - s3:GetBucketAcl
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !Join ['', ["arn:aws:s3:::", !Ref DependentJarsAndTempS3Bucket]]
+              - !Join ['', ["arn:aws:s3:::", !Ref DependentJarsAndTempS3Bucket, "/*"]]
+              - !Join ['', ["arn:aws:s3:::", !Ref CuratedS3Bucket]]
+              - !Join ['', ["arn:aws:s3:::", !Ref CuratedS3Bucket, "/*"]]
+              - !Join ['', ["arn:aws:s3:::", !Ref RawS3Bucket]]
+              - !Join ['', ["arn:aws:s3:::", !Ref RawS3Bucket, "/*"]]
+      Roles:
+        - LakeHouseExecuteGlueHudiJobRole
+
+  RedshiftGlueAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LakeHouseRedshiftGlueAccessRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - redshift.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Tags:
+        -
+          Key: Project
+          Value: BPHudiPOC
+        -
+          Key: Owner
+          Value: Minh
+
+  ReqdForReadOnlyAccessToGlueCatalog:
+    Type: AWS::IAM::ManagedPolicy
+    DependsOn: RedshiftGlueAccessRole
+    Properties:
+      ManagedPolicyName: LakeHouseReqdForReadOnlyAccessToGlueCatalog
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:GetTable
+              - glue:GetTables
+              - glue:GetPartition
+              - glue:GetPartitions
+            Resource: '*'
+          -
+            Effect: Allow
+            Action:
+                - s3:GetObject
+                - s3:GetBucketLocation
+                - s3:ListBucket
+                - s3:ListMultipartUploadParts
+                - s3:ListBucketMultipartUploads
+            Resource:
+                - !Join ['', ["arn:aws:s3:::", !Ref CuratedS3Bucket]]
+                - !Join ['', ["arn:aws:s3:::", !Ref CuratedS3Bucket, "/*"]]
+      Roles:
+        - LakeHouseRedshiftGlueAccessRole
+
+  HudiGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Description: This job creates both Hudi and Glueparquet tables
+      Command:
+        Name: glueetl
+        ScriptLocation: "s3://mqtran/artifacts/Glue/HudiGlueJob.py"
+        PythonVersion: 3
+      DefaultArguments:
+        '--extra-jars': !Join ['', ["s3://mqtran/artifacts/hudi-spark.jar", ",s3://mqtran/artifacts/Jars/spark-avro_2.11-2.4.4.jar"]]
+        '--enable-glue-datacatalog': ''
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--enable-metrics': ''
+        '--TempDir': !Join ['', ["s3://mqtran/artifacts/Temp"]]
+        '--job-language': 'python'
+        '--additional-python-modules': 'botocore==1.18.5,boto3==1.15.5',
+        '--SOURCE_LOCATION': 's3://mqtran/raw/nyc-tlc/day=0/',
+        '--OUTPUT_LOCATION': 's3://mqtran/transform/mqtran_db/nyc-tlc'
+      MaxRetries: 0
+      Name: HudiGlueJob
+      GlueVersion: 2.0
+      Role: "arn:aws:iam::747843067444:role/LakeHouseExecuteGlueHudiJobRole"
+      MaxCapacity: !Ref GlueJobDPUs
+      ExecutionProperty:
+        MaxConcurrentRuns: 1

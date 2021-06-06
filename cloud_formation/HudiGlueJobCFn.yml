@@ -1,0 +1,71 @@
+Description:  This template deploys various components to test Hudi and Glue
+
+Parameters:
+
+  GlueJobDPUs:
+    Type: Number
+    Description: The number of DPUs that will be assigned to the 2 Glue jobs.
+    Default: 2.0
+
+  HudiConnectionName:
+    Description: The name of the AWS Glue Connection created in Glue Studio using the deep URL
+    Type: String
+    Default: "hudi-connection"
+
+Resources:
+
+  HudiGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Description: This job creates both Hudi and Glueparquet tables
+      Command:
+        Name: glueetl
+        ScriptLocation: "s3://mqtran/artifacts/Glue/HudiJarGlueJob.py"
+        PythonVersion: 3
+      DefaultArguments:
+        '--extra-jars': !Join ['', ["s3://mqtran/artifacts/hudi-spark.jar", ",s3://mqtran/artifacts/Jars/spark-avro_2.11-2.4.4.jar"]]
+        '--enable-glue-datacatalog': ''
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--enable-metrics': ''
+        '--TempDir': !Join ['', ["s3://mqtran/artifacts/Temp"]]
+        '--job-language': 'python'
+        '--additional-python-modules': 'botocore==1.18.5,boto3==1.15.5'
+        '--SOURCE_LOCATION': 's3://mqtran/raw/nyc-tlc/day=0/'
+        '--OUTPUT_LOCATION': 's3://mqtran/transform/mqtran_db/nyc-tlc'
+      MaxRetries: 0
+      Name: HudiJarGlueJob
+      GlueVersion: 2.0
+      Role: "arn:aws:iam::747843067444:role/LakeHouseExecuteGlueHudiJobRole"
+      MaxCapacity: !Ref GlueJobDPUs
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+
+  HudiConnectorGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Description: This job creates both Hudi and Glueparquet tables
+      Command:
+        Name: glueetl
+        ScriptLocation: "s3://mqtran/artifacts/Glue/HudiConnectorGlueJob.py"
+        PythonVersion: 3
+      DefaultArguments:
+        '--enable-glue-datacatalog': ''
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--enable-metrics': ''
+        '--TempDir': !Join ['', ["s3://mqtran/artifacts/Temp"]]
+        '--job-language': 'python'
+        '--additional-python-modules': 'botocore==1.18.5,boto3==1.15.5'
+        '--SOURCE_LOCATION': 's3://mqtran/raw/nyc-tlc/day=0/'
+        '--OUTPUT_LOCATION': 's3://mqtran/transform/mqtran_db/nyc-tlc'
+      MaxRetries: 0
+      Name: HudiConnectorGlueJob
+      GlueVersion: 2.0
+      Role: "arn:aws:iam::747843067444:role/LakeHouseExecuteGlueHudiJobRole"
+      MaxCapacity: !Ref GlueJobDPUs
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      Connections:
+        Connections:
+          - !Ref HudiConnectionName
+      Tags:
+        Project: BPPocHudiConnector
